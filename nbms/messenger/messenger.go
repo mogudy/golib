@@ -8,12 +8,15 @@ import (
 
 type(
 	Connector interface {
-		ConsumeQueue(string, func([]byte)[]byte) (error)
-		ListQueues() ([]string)
+		ListenWithFunc(service string,api string,action func([]byte)[]byte) (error)
+		SendTo(service string,api string,param string)(error)
+		ListQueues() (names []string)
+		Close()
 	}
 	agent struct{
 		conn *amqp.Connection
-		chnn *amqp.Channel
+		sndChan *amqp.Channel
+		rcvChan *amqp.Channel
 		queues []amqp.Queue
 		name string
 	}
@@ -23,19 +26,32 @@ func CreateMessenger(name string, username string,password string,server string,
 	// establish connection
 	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",username,password,server,port))
 	if err != nil { return nil, err}
-	// create channel
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-	defer conn.Close()
-	defer ch.Close()
-	return &agent{conn,ch,[]amqp.Queue{},name},nil
+	log.Println("AMQP Connection established.")
+	return &agent{conn:conn,queues:[]amqp.Queue{},name:name},nil
 }
 
-func (a *agent)ConsumeQueue(topic string, callback func(param []byte)([]byte))(error){
-	q, err := a.chnn.QueueDeclare(
+func (a *agent)ListenWithFunc(exch string, topic string, callback func(param []byte)([]byte))(error){
+	// create channel
+	if a.rcvChan == nil {
+		ch, err := a.conn.Channel()
+		if err != nil {
+			return err
+		}
+		a.rcvChan = ch
+	}
+
+	err := a.rcvChan.ExchangeDeclare(
+		exch, // name
+		"topic",      // type
+		true,         // durable
+		false,        // auto-deleted
+		false,        // internal
+		false,        // no-wait
+		nil,          // arguments
+	)
+	if err != nil { return err}
+
+	q, err := a.rcvChan.QueueDeclare(
 		topic, // name
 		true,   // durable
 		false,   // delete when usused
@@ -44,8 +60,17 @@ func (a *agent)ConsumeQueue(topic string, callback func(param []byte)([]byte))(e
 		nil,     // arguments
 	)
 	if err != nil { return err}
+	log.Println("Entering consuming queue.")
 
-	msgs, err := a.chnn.Consume(
+	err = a.rcvChan.QueueBind(
+		topic, // queue name
+		topic,     // routing key
+		exch, // exchange
+		false,
+		nil)
+	if err != nil { return err}
+
+	msgs, err := a.rcvChan.Consume(
 		q.Name, // queue
 		a.name,     // consumer
 		false,   // auto-ack
@@ -88,10 +113,38 @@ func (a *agent)ConsumeQueue(topic string, callback func(param []byte)([]byte))(e
 	return nil
 }
 
+func (a *agent)SendTo(exch string, topic string, msg string)(error){
+	// create channel
+	if a.sndChan == nil {
+		ch, err := a.conn.Channel()
+		if err != nil {
+			return err
+		}
+		a.sndChan = ch
+	}
+	err := a.sndChan.Publish(
+		exch,     // exchange
+		topic, // routing key
+		true,  // mandatory
+		false,  // immediate
+		amqp.Publishing {
+			ContentType: "text/plain",
+			DeliveryMode: amqp.Persistent,
+			Body:        []byte(msg),
+		})
+	return err
+}
+
 func (a *agent)ListQueues() ([]string){
 	result := make([]string, 0)
 	for q := range a.queues{
 		result = append(result, a.queues[q].Name)
 	}
 	return result
+}
+
+func (a *agent)Close() (){
+	a.sndChan.Close()
+	a.rcvChan.Close()
+	a.conn.Close()
 }
