@@ -8,7 +8,7 @@ import (
 
 type(
 	Connector interface {
-		ListenWithFunc(service string,api string,action func([]byte)[]byte) (error)
+		ListenWithFunc(consumerName string,service string,api string,action func([]byte)[]byte) (error)
 		SendTo(service string,api string,param string)(error)
 		ListQueues() (names []string)
 		Close()
@@ -18,19 +18,18 @@ type(
 		sndChan *amqp.Channel
 		rcvChan *amqp.Channel
 		queues []amqp.Queue
-		name string
 	}
 )
 
-func CreateMessenger(name string, username string,password string,server string,port uint32)(Connector, error){
+func CreateMessenger(username string,password string,server string,port uint32)(Connector, error){
 	// establish connection
 	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",username,password,server,port))
 	if err != nil { return nil, err}
 	log.Println("AMQP Connection established.")
-	return &agent{conn:conn,queues:[]amqp.Queue{},name:name},nil
+	return &agent{conn:conn,queues:[]amqp.Queue{}},nil
 }
 
-func (a *agent)ListenWithFunc(exch string, topic string, callback func(param []byte)([]byte))(error){
+func (a *agent)ListenWithFunc(consumerName string,exch string, topic string, callback func(param []byte)([]byte))(error){
 	// create channel
 	if a.rcvChan == nil {
 		ch, err := a.conn.Channel()
@@ -72,7 +71,7 @@ func (a *agent)ListenWithFunc(exch string, topic string, callback func(param []b
 
 	msgs, err := a.rcvChan.Consume(
 		q.Name, // queue
-		a.name,     // consumer
+		consumerName,     // consumer
 		false,   // auto-ack
 		false,  // exclusive
 		false,  // no-local
