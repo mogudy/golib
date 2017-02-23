@@ -144,7 +144,7 @@ func (a *agent)ListQueues() ([]string){
 }
 
 func (a *agent)Close() (){
-	a.sndChan.Close()
-	a.rcvChan.Close()
-	a.conn.Close()
+	if a.sndChan!=nil{a.sndChan.Close()}
+	if a.rcvChan!=nil{a.rcvChan.Close()}
+	if a.conn!=nil{a.conn.Close()}
 }
