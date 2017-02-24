@@ -9,8 +9,11 @@ import (
 	"errors"
 	"github.com/mogudy/golib/nbms/servant"
 	"github.com/mogudy/golib/nbms/messenger"
-	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-xorm/xorm"
+	"github.com/go-xorm/core"
+	"github.com/go-xorm/builder"
+	"database/sql"
 )
 
 type(
@@ -29,7 +32,7 @@ type(
 		config    *NbConfig
 		messenger messenger.Connector
 		started   bool
-		db        *sql.DB
+		db        *xorm.Engine
 		msgp uint32
 	}
 )
@@ -62,6 +65,18 @@ type(
 		Interval string
 		Timeout string
 	}
+
+	RequestHistory struct {
+		Id int64 `xorm:"pk autoincr"`
+		Ip int `xorm:"notnull default(0)"`
+		Service string `xorm:"notnull"`
+		Api string `xorm:"notnull"`
+		Param string `xorm:"notnull varchar(1024) default('')"`
+		Method string `xorm:"notnull"`
+		Direction string `xorm:"notnull"`
+		RequestTime time.Time `xorm:"notnull created"`
+		Version int `xorm:"notnull version"`
+	}
 )
 func CreateService(filepath string) (ConsulService, error){
 	// Loading config
@@ -72,21 +87,24 @@ func CreateService(filepath string) (ConsulService, error){
 	cfile.MustLoad(config)
 
 	// setup db connection & validate it
-	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+	engine, err := xorm.NewEngine("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8",
 		config.Database.Username, config.Database.Password,
 		config.Database.Address, config.Database.Port, config.Database.Name))
 	if err != nil {return nil, err}
-	//defer db.Close()
-	err = db.Ping()
-	if err != nil {return nil, err}
+	engine.SetMaxIdleConns(10)
+	engine.SetMaxOpenConns(10)
+	engine.SetMapper(core.GonicMapper{})
+	// Init table: request_history
+	err = engine.Sync2(new (RequestHistory))
+	if err != nil {engine.Close();return nil, err}
 
 	// Register Service & Health check
 	agent, err := servant.NewConsulClient(fmt.Sprintf("%s:%d",config.Service.Server,config.Service.Port))
-	if err != nil{ return nil, err }
-	agent.Register(fmt.Sprintf("%s-%s",config.Service.Name,time.Now().Format("2006010215")), config.Service.Tags, 80)
-	//defer agent.DeRegister()
+	if err != nil{ engine.Close();return nil, err }
+	err = agent.Register(fmt.Sprintf("%s-%s",config.Service.Name,time.Now().Format("2006010215")), config.Service.Tags, 80)
+	if err != nil{ agent.DeRegister();engine.Close();return nil, err }
 
-	return &service{agent: agent,config: config,started: false,db:db,msgp:0},nil
+	return &service{agent: agent,config: config,started: false,db:engine,msgp:0},nil
 }
 
 func (s *service)DeRegister(){
@@ -154,7 +172,11 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp), s.config.Service.Name,topic, callback)
+
+	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),s.config.Service.Name,topic, func(param []byte)([]byte){
+		s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:topic,Param:string(param),Method:"amqp",Direction:"in"})
+		return callback(param)
+	})
 	if err==nil{s.msgp = s.msgp+1}
 	return err
 }
