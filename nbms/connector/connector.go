@@ -71,13 +71,13 @@ func CreateService(filepath string) (ConsulService, error){
 	cfile.MustLoad(config)
 
 	// setup db connection & validate it
-	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
-		config.Database.Username, config.Database.Password,
-		config.Database.Address, config.Database.Port, config.Database.Name))
-	if err != nil {return nil, err}
-	//defer db.Close()
-	err = db.Ping()
-	if err != nil {return nil, err}
+	//db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+	//	config.Database.Username, config.Database.Password,
+	//	config.Database.Address, config.Database.Port, config.Database.Name))
+	//if err != nil {return nil, err}
+	////defer db.Close()
+	//err = db.Ping()
+	//if err != nil {return nil, err}
 
 	// Register Service & Health check
 	agent, err := servant.NewConsulClient(fmt.Sprintf("%s:%d",config.Service.Server,config.Service.Port))
