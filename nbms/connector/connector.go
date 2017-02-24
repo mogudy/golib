@@ -14,10 +14,14 @@ import (
 
 type(
 	ConsulService interface {
-		GetDbConnection()(*sql.DB)
+		DeRegister()
+		BatchUpdate(string, [][]interface{}, func()(error)) (error)
+		SqlUpdate(string, []interface{})(error)
+		SqlSelect(string, []interface{}, []*interface{})(error)
 		RegisterMessageHandler(string, func([]byte)[]byte)(error)
 		RegisterHttpHandler(string, bool, func([]byte)([]byte))
 		StartServer(bool)
+		SendRequest(string, string, string, uint32)(error)
 	}
 	service struct {
 		agent     servant.ConsulAgent
@@ -25,6 +29,7 @@ type(
 		messenger messenger.Connector
 		started   bool
 		db        *sql.DB
+		msgp uint32
 	}
 )
 
@@ -70,7 +75,7 @@ func CreateService(filepath string) (ConsulService, error){
 		config.Database.Username, config.Database.Password,
 		config.Database.Address, config.Database.Port, config.Database.Name))
 	if err != nil {return nil, err}
-	defer db.Close()
+	//defer db.Close()
 	err = db.Ping()
 	if err != nil {return nil, err}
 
@@ -78,13 +83,60 @@ func CreateService(filepath string) (ConsulService, error){
 	agent, err := servant.NewConsulClient(fmt.Sprintf("%s:%d",config.Service.Server,config.Service.Port))
 	if err != nil{ return nil, err }
 	agent.Register(fmt.Sprintf("%s-%s",config.Service.Name,time.Now().Format("2006010215")), config.Service.Tags, 80)
-	defer agent.DeRegister()
+	//defer agent.DeRegister()
 
-	return &service{agent: agent,config: config,started: false, db: db},nil
+	return &service{agent: agent,config: config,started: false, db: db,msgp:0},nil
 }
 
-func (s *service)GetDbConnection()*sql.DB{
-	return s.db
+func (s *service)DeRegister(){
+	defer s.messenger.Close()
+	defer s.agent.DeRegister()
+}
+func (s *service)BatchUpdate(query string, params [][]interface{}, action func()(error)) (error){
+	// Start Transaction
+	tx, err := s.db.Begin()
+	if err!=nil{
+		return errors.New("Transaction init Error: "+err.Error())
+	}
+	// added to database
+	stmt, err := tx.Prepare(query)
+	if err!=nil{
+		return errors.New("Query preparation Error: "+err.Error())
+	}
+	defer stmt.Close()
+	for _,stms := range params{
+		_, err := stmt.Exec(stms...)
+		if err!=nil{
+			tx.Rollback()
+			return errors.New("Sql execution Error: "+err.Error())
+		}
+	}
+	err = action()
+	if err!=nil{
+		tx.Rollback()
+		return errors.New("Action execution Error: "+err.Error())
+	}
+	tx.Commit()
+	return nil
+}
+func (s *service)SqlUpdate(query string, params[]interface{}) (error){
+	_, err := s.db.Exec("select user,password,host from mysql.user",params...)
+	if err!=nil{
+		return errors.New("Sql execution Error: "+err.Error())
+	}
+	return nil
+}
+func (s *service)SqSelect(query string, params[]interface{}, cols []*interface{}) (error){
+	rows, err := s.db.Query("select user,password,host from mysql.user",params...)
+	if err!=nil{
+		return errors.New("Sql execution Error: "+err.Error())
+	}
+	defer rows.Close()
+	err = rows.Scan(cols...)
+	if err!=nil{
+		return errors.New("Result extract Error: "+err.Error())
+	}
+	return nil
 }
 func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]byte)) (error){
 	// create a mq agent if not exist
@@ -92,7 +144,7 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 		return errors.New("Amqp Address Configuration is missing.")
 	}
 	if s.messenger == nil {
-		msger, err := messenger.CreateMessenger(s.config.Service.Name, s.config.Amqp.Username, s.config.Amqp.Password, s.config.Amqp.Address, s.config.Amqp.Port)
+		msger, err := messenger.CreateMessenger(s.config.Amqp.Username, s.config.Amqp.Password, s.config.Amqp.Address, s.config.Amqp.Port)
 		if err!=nil{
 			return err
 		}
@@ -100,10 +152,10 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ConsumeQueue(topic, callback)
+	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Service.Name,time.Now().Format("06010215"),s.msgp), s.config.Service.Name,topic, callback)
+	if err==nil{s.msgp = s.msgp+1}
 	return err
 }
-
 func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte)){
 	// register the api in http interface
 	http.HandleFunc(api, func(resp http.ResponseWriter, req *http.Request){
@@ -117,7 +169,6 @@ func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]by
 		resp.Write(callback(pp))
 	})
 }
-
 func (s *service)StartServer(remoteShutdown bool){
 	if !s.started {
 		var haltch = make(chan bool)
@@ -127,7 +178,7 @@ func (s *service)StartServer(remoteShutdown bool){
 				resp.Write([]byte("{\"result\":\"success\",\"code\":200}"))
 			})
 		}
-		go http.ListenAndServe(":8080", nil)
+		go http.ListenAndServe(":80", nil)
 		s.started = true
 
 		select {
@@ -136,4 +187,16 @@ func (s *service)StartServer(remoteShutdown bool){
 		}
 		}
 	}
+}
+func (s *service)SendRequest(service string, api string, param string, method uint32)(error){
+	switch method {
+	case 1:{
+		//amqp
+
+	}
+	case 2:{
+		//http
+	}
+	}
+	return nil
 }
