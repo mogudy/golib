@@ -12,6 +12,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/go-xorm/xorm"
 	"github.com/go-xorm/core"
+	"strings"
+	"strconv"
 )
 
 type(
@@ -178,6 +180,21 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	if err==nil{s.msgp = s.msgp+1}
 	return err
 }
+func ConvertToIntIP(ip string) (int) {
+	ips := strings.Split(ip, ".")
+	if len(ips) != 4 {
+		return 0
+	}
+	var intIP int
+	for k, v := range ips {
+		i, err := strconv.Atoi(v)
+		if err != nil || i > 255 {
+			return 0
+		}
+		intIP = intIP | i<<uint(8*(3-k))
+	}
+	return intIP
+}
 func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte)){
 	// register the api in http interface
 	http.HandleFunc(api, func(resp http.ResponseWriter, req *http.Request){
@@ -187,7 +204,7 @@ func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]by
 
 		mm := "get"
 		if isPost {mm = "post"}
-		s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:api,Param:string(pp),Method:mm,Direction:"in"})
+		s.db.Insert(RequestHistory{Ip:ConvertToIntIP(req.RemoteAddr),Service:s.config.Service.Name,Api:api,Param:string(pp),Method:mm,Direction:"in"})
 		if err != nil && err.Error() != "EOF"{
 			log.Printf("API: %s, error: %s, param: %s",api,err,pp)
 			return
