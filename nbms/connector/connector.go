@@ -184,6 +184,10 @@ func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]by
 		pp := make([]byte, req.ContentLength)
 		_,err := req.Body.Read(pp)
 		defer req.Body.Close()
+
+		mm := "get"
+		if isPost {mm = "post"}
+		s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:api,Param:string(pp),Method:mm,Direction:"in"})
 		if err != nil && err.Error() != "EOF"{
 			log.Printf("API: %s, error: %s, param: %s",api,err,pp)
 			return
