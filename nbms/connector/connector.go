@@ -90,8 +90,9 @@ func CreateService(filepath string) (ConsulService, error){
 }
 
 func (s *service)DeRegister(){
-	defer s.messenger.Close()
-	defer s.agent.DeRegister()
+	if s.db !=nil{ s.db.Close() }
+	if s.messenger !=nil{ s.messenger.Close() }
+	if s.agent !=nil{ s.agent.DeRegister() }
 }
 //func (s *service)BatchUpdate(query string, params [][]interface{}, action func()(error)) (error){
 //	// Start Transaction
@@ -153,7 +154,7 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Service.Name,time.Now().Format("06010215"),s.msgp), s.config.Service.Name,topic, callback)
+	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp), s.config.Service.Name,topic, callback)
 	if err==nil{s.msgp = s.msgp+1}
 	return err
 }
