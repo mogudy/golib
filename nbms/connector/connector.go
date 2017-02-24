@@ -15,13 +15,13 @@ import (
 type(
 	ConsulService interface {
 		DeRegister()
-		BatchUpdate(string, [][]interface{}, func()(error)) (error)
-		SqlUpdate(string, []interface{})(error)
-		SqlSelect(string, []interface{}, []*interface{})(error)
-		RegisterMessageHandler(string, func([]byte)[]byte)(error)
-		RegisterHttpHandler(string, bool, func([]byte)([]byte))
-		StartServer(bool)
-		SendRequest(string, string, string, uint32)(error)
+		//BatchUpdateBatchUpdate(query string, params [][]interface{}, action func()(error))(error)
+		//SqlUpdate(query string, params[]interface{})(error)
+		//SqlSelect(query string, params[]interface{}, cols []*interface{})
+		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
+		RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte))
+		StartServer(remoteShutdown bool)
+		SendRequest(service string, api string, param string, method uint32)(error)
 	}
 	service struct {
 		agent     servant.ConsulAgent
@@ -85,59 +85,59 @@ func CreateService(filepath string) (ConsulService, error){
 	agent.Register(fmt.Sprintf("%s-%s",config.Service.Name,time.Now().Format("2006010215")), config.Service.Tags, 80)
 	//defer agent.DeRegister()
 
-	return &service{agent: agent,config: config,started: false, db: db,msgp:0},nil
+	return &service{agent: agent,config: config,started: false,db:db,msgp:0},nil
 }
 
 func (s *service)DeRegister(){
 	defer s.messenger.Close()
 	defer s.agent.DeRegister()
 }
-func (s *service)BatchUpdate(query string, params [][]interface{}, action func()(error)) (error){
-	// Start Transaction
-	tx, err := s.db.Begin()
-	if err!=nil{
-		return errors.New("Transaction init Error: "+err.Error())
-	}
-	// added to database
-	stmt, err := tx.Prepare(query)
-	if err!=nil{
-		return errors.New("Query preparation Error: "+err.Error())
-	}
-	defer stmt.Close()
-	for _,stms := range params{
-		_, err := stmt.Exec(stms...)
-		if err!=nil{
-			tx.Rollback()
-			return errors.New("Sql execution Error: "+err.Error())
-		}
-	}
-	err = action()
-	if err!=nil{
-		tx.Rollback()
-		return errors.New("Action execution Error: "+err.Error())
-	}
-	tx.Commit()
-	return nil
-}
-func (s *service)SqlUpdate(query string, params[]interface{}) (error){
-	_, err := s.db.Exec("select user,password,host from mysql.user",params...)
-	if err!=nil{
-		return errors.New("Sql execution Error: "+err.Error())
-	}
-	return nil
-}
-func (s *service)SqSelect(query string, params[]interface{}, cols []*interface{}) (error){
-	rows, err := s.db.Query("select user,password,host from mysql.user",params...)
-	if err!=nil{
-		return errors.New("Sql execution Error: "+err.Error())
-	}
-	defer rows.Close()
-	err = rows.Scan(cols...)
-	if err!=nil{
-		return errors.New("Result extract Error: "+err.Error())
-	}
-	return nil
-}
+//func (s *service)BatchUpdate(query string, params [][]interface{}, action func()(error)) (error){
+//	// Start Transaction
+//	tx, err := s.db.Begin()
+//	if err!=nil{
+//		return errors.New("Transaction init Error: "+err.Error())
+//	}
+//	// added to database
+//	stmt, err := tx.Prepare(query)
+//	if err!=nil{
+//		return errors.New("Query preparation Error: "+err.Error())
+//	}
+//	defer stmt.Close()
+//	for _,stms := range params{
+//		_, err := stmt.Exec(stms...)
+//		if err!=nil{
+//			tx.Rollback()
+//			return errors.New("Sql execution Error: "+err.Error())
+//		}
+//	}
+//	err = action()
+//	if err!=nil{
+//		tx.Rollback()
+//		return errors.New("Action execution Error: "+err.Error())
+//	}
+//	tx.Commit()
+//	return nil
+//}
+//func (s *service)SqlUpdate(query string, params[]interface{}) (error){
+//	_, err := s.db.Exec("select user,password,host from mysql.user",params...)
+//	if err!=nil{
+//		return errors.New("Sql execution Error: "+err.Error())
+//	}
+//	return nil
+//}
+//func (s *service)SqSelect(query string, params[]interface{}, cols []*interface{}) (error){
+//	rows, err := s.db.Query("select user,password,host from mysql.user",params...)
+//	if err!=nil{
+//		return errors.New("Sql execution Error: "+err.Error())
+//	}
+//	defer rows.Close()
+//	err = rows.Scan(cols...)
+//	if err!=nil{
+//		return errors.New("Result extract Error: "+err.Error())
+//	}
+//	return nil
+//}
 func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]byte)) (error){
 	// create a mq agent if not exist
 	if s.config.Amqp.Port == 0 || s.config.Amqp.Address == "" {
@@ -189,14 +189,5 @@ func (s *service)StartServer(remoteShutdown bool){
 	}
 }
 func (s *service)SendRequest(service string, api string, param string, method uint32)(error){
-	switch method {
-	case 1:{
-		//amqp
-
-	}
-	case 2:{
-		//http
-	}
-	}
 	return nil
 }
