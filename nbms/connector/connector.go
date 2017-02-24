@@ -24,7 +24,7 @@ type(
 		//SqlSelect(query string, params[]interface{}, cols []*interface{})
 		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
 		RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte))
-		StartServer(remoteShutdown bool)
+		StartServer(remoteShutdown bool)error
 		SendRequest(service string, api string, param string, method uint32)(error)
 	}
 	service struct {
@@ -212,24 +212,28 @@ func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]by
 		resp.Write(callback(pp))
 	})
 }
-func (s *service)StartServer(remoteShutdown bool){
+func (s *service)StartServer(remoteShutdown bool)error{
 	if !s.started {
-		var haltch = make(chan bool)
+		svr := &http.Server{
+			Addr: ":80",
+			Handler:http.DefaultServeMux,
+			ReadTimeout:10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		}
 		if remoteShutdown{
 			http.HandleFunc("/shutdown",func(resp http.ResponseWriter, req *http.Request){
-				haltch <- true
 				resp.Write([]byte("{\"result\":\"success\",\"code\":200}"))
+				svr.Shutdown(nil)
 			})
 		}
-		go http.ListenAndServe(":80", nil)
+		//err := http.ListenAndServe(":80", nil)
+		err := svr.ListenAndServe()
+		if err!=nil{return err}
 		s.started = true
-
-		select {
-		case <-haltch:{
-			log.Println("System exit")
-		}
-		}
+		log.Println("Listen to http(80)")
 	}
+	return nil
 }
 func (s *service)SendRequest(service string, api string, param string, method uint32)(error){
 	return nil
