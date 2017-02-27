@@ -24,6 +24,7 @@ type(
 		UpdateRecord(bean interface{}, conditions ...interface{})(int64, error)
 		DeleteRecord(bean interface{})(int64, error)
 		FindRecords(bean interface{}, conditions ...interface{})(error)
+		GetFirstRecord(bean interface{})(bool, error)
 		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
 		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte))
 		StartServer(remoteShutdown bool)error
@@ -134,6 +135,9 @@ func (s *service)UpdateRecord(bean interface{}, conditions ...interface{})(int64
 }
 func (s *service)DeleteRecord(bean interface{})(int64, error){
 	return s.db.Delete(bean)
+}
+func (s *service)GetFirstRecord(bean interface{})(bool,error){
+	return s.db.Get(bean)
 }
 func (s *service)FindRecords(bean interface{}, cond ...interface{})(error){
 	return s.db.Find(bean, cond)
