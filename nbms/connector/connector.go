@@ -80,7 +80,7 @@ type(
 		Version int `xorm:"notnull version"`
 	}
 )
-const (  // iota is reset to 0
+const (
 	AMQP = "AMQP"
 	GET = "GET"
 	POST = "POST"
