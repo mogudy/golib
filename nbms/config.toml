@@ -1,0 +1,28 @@
+[service]
+server = "192.168.192.134"
+port = 8500
+name = "scheduler"
+#username = ""
+#password = ""
+
+[health]
+method = "ttl"
+interval = "30s"
+timeout = "30s"
+
+[database]
+address = "192.168.192.134"
+port = 3306
+name = "test"
+username = "nbxx"
+password = "wahaha"
+
+[amqp]
+address = "192.168.192.134"
+port = 5672
+name = "scheduler"
+username = "guest"
+password = "guest"
+
+[Application]
+id = "scheduler_1"
