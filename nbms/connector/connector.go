@@ -207,8 +207,7 @@ func (s *service)StartServer(remoteShutdown bool)error{
 			})
 		}
 		//err := http.ListenAndServe(":80", nil)
-		err := svr.ListenAndServe()
-		if err!=nil{return err}
+		go svr.ListenAndServe()
 		s.started = true
 		log.Println("Listen to http(80)")
 		select {
