@@ -12,12 +12,12 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/go-xorm/xorm"
 	"github.com/go-xorm/core"
-	"strings"
 	"strconv"
 )
 
 type(
 	ConsulService interface {
+		Config()*NbConfig
 		DeRegister()
 		CreateDataTable(bean ...interface{})error
 		InsertRecord(bean ...interface{})(int64, error)
@@ -25,8 +25,8 @@ type(
 		DeleteRecord(bean interface{})(int64, error)
 		FindRecords(bean interface{}, conditions ...interface{})(error)
 		GetFirstRecord(bean interface{})(bool, error)
-		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
-		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte))
+		RegisterMessageHandler(topic string, callback func([]byte)([]byte,error))(error)
+		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte,error))
 		StartServer(remoteShutdown bool)error
 		SendRequest(method string, service string, api string, param string)(error)
 	}
@@ -71,7 +71,7 @@ type(
 
 	RequestHistory struct {
 		Id int64 `xorm:"pk autoincr"`
-		Ip int `xorm:"notnull default(0)"`
+		Ip string `xorm:"notnull default('')"`
 		Service string `xorm:"notnull"`
 		Api string `xorm:"notnull"`
 		Param string `xorm:"notnull varchar(1024) default('')"`
@@ -119,6 +119,11 @@ func CreateService(filepath string) (ConsulService, error){
 
 	return &service{agent: agent,config: config,started: false,db:engine,msgp:0},nil
 }
+func (s *service)Config()*NbConfig{
+	tmp := new(NbConfig)
+	*tmp = * s.config
+	return tmp
+}
 func (s *service)DeRegister(){
 	if s.db !=nil{ s.db.Close() }
 	if s.messenger !=nil{ s.messenger.Close() }
@@ -131,7 +136,7 @@ func (s *service)InsertRecord(bean ...interface{})(int64, error){
 	return s.db.Insert(bean...)
 }
 func (s *service)UpdateRecord(bean interface{}, conditions ...interface{})(int64, error){
-	return s.db.Update(bean,conditions)
+	return s.db.Update(bean,conditions...)
 }
 func (s *service)DeleteRecord(bean interface{})(int64, error){
 	return s.db.Delete(bean)
@@ -142,7 +147,7 @@ func (s *service)GetFirstRecord(bean interface{})(bool,error){
 func (s *service)FindRecords(bean interface{}, cond ...interface{})(error){
 	return s.db.Find(bean, cond)
 }
-func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]byte)) (error){
+func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]byte,error)) (error){
 	// create a mq agent if not exist
 	if s.config.Amqp.Port == 0 || s.config.Amqp.Address == "" {
 		return errors.New("Amqp Address Configuration is missing.")
@@ -156,41 +161,43 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),s.config.Service.Name,topic, func(param []byte)([]byte){
-		s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:topic,Param:string(param),Method:"amqp",Direction:"in"})
-		return callback(param)
+	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),
+		s.config.Service.Name,topic,
+		func(param []byte)([]byte){
+			s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:topic,Param:string(param),Method:"amqp",Direction:"in"})
+			res,err = callback(param)
+			if err!=nil{
+				return err
+			}else{
+				return res
+			}
 	})
 	if err==nil{s.msgp = s.msgp+1}
 	return err
 }
-func ConvertToIntIP(ip string) (int) {
-	ips := strings.Split(ip, ".")
-	if len(ips) != 4 {
-		return 0
-	}
-	var intIP int
-	for k, v := range ips {
-		i, err := strconv.Atoi(v)
-		if err != nil || i > 255 {
-			return 0
-		}
-		intIP = intIP | i<<uint(8*(3-k))
-	}
-	return intIP
-}
-func (s *service)RegisterHttpHandler(api string, method string, callback func([]byte)([]byte)){
+func (s *service)RegisterHttpHandler(api string, method string, callback func([]byte)([]byte,error)){
 	// register the api in http interface
 	http.HandleFunc(api, func(resp http.ResponseWriter, req *http.Request){
-		pp := make([]byte, req.ContentLength)
-		_,err := req.Body.Read(pp)
-		defer req.Body.Close()
-
-		s.db.Insert(RequestHistory{Ip:ConvertToIntIP(req.RemoteAddr),Service:s.config.Service.Name,Api:api,Param:string(pp),Method:method,Direction:"in"})
-		if err != nil && err.Error() != "EOF"{
-			log.Printf("API: %s, error: %s, param: %s",api,err,pp)
-			return
+		if req.Method==method{
+			pp := make([]byte, req.ContentLength)
+			_,err := req.Body.Read(pp)
+			defer req.Body.Close()
+			if err != nil && err.Error() != "EOF"{
+				log.Printf("API: %s, error: %s, param: %s",api,err,pp)
+				resp.WriteHeader(400)
+				return
+			}
+			s.db.Insert(RequestHistory{Ip:req.RemoteAddr,Service:s.config.Service.Name,Api:api,Param:string(pp),Method:method,Direction:"in"})
+			result,err := callback(pp)
+			if err!=nil{
+				status,_:=strconv.Atoi(err.Error())
+				resp.WriteHeader(status)
+			}
+			resp.Write(result)
+		}else{
+			resp.WriteHeader(404)
+			//return &HTTPError{errors.New("No good!"), http.StatusBadRequest}
 		}
-		resp.Write(callback(pp))
 	})
 }
 func (s *service)StartServer(remoteShutdown bool)error{
