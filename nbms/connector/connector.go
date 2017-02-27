@@ -23,7 +23,7 @@ type(
 		//SqlUpdate(query string, params[]interface{})(error)
 		//SqlSelect(query string, params[]interface{}, cols []*interface{})
 		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
-		RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte))
+		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte))
 		StartServer(remoteShutdown bool)error
 		SendRequest(service string, api string, param string, method uint32)(error)
 	}
@@ -78,6 +78,15 @@ type(
 		Version int `xorm:"notnull version"`
 	}
 )
+const (  // iota is reset to 0
+	GET = "GET"
+	POST = "POST"
+	PUT = "PUT"
+	DELETE = "DELETE"
+	HEAD = "HEAD"
+	OPTION = "OPTION"
+)
+
 func CreateService(filepath string) (ConsulService, error){
 	// Loading config
 	config := new (NbConfig)
@@ -172,7 +181,6 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 	}
 
 	// create & listen to queue/topic if not registered yet
-
 	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),s.config.Service.Name,topic, func(param []byte)([]byte){
 		s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:topic,Param:string(param),Method:"amqp",Direction:"in"})
 		return callback(param)
@@ -195,16 +203,14 @@ func ConvertToIntIP(ip string) (int) {
 	}
 	return intIP
 }
-func (s *service)RegisterHttpHandler(api string, isPost bool, callback func([]byte)([]byte)){
+func (s *service)RegisterHttpHandler(api string, method string, callback func([]byte)([]byte)){
 	// register the api in http interface
 	http.HandleFunc(api, func(resp http.ResponseWriter, req *http.Request){
 		pp := make([]byte, req.ContentLength)
 		_,err := req.Body.Read(pp)
 		defer req.Body.Close()
 
-		mm := "get"
-		if isPost {mm = "post"}
-		s.db.Insert(RequestHistory{Ip:ConvertToIntIP(req.RemoteAddr),Service:s.config.Service.Name,Api:api,Param:string(pp),Method:mm,Direction:"in"})
+		s.db.Insert(RequestHistory{Ip:ConvertToIntIP(req.RemoteAddr),Service:s.config.Service.Name,Api:api,Param:string(pp),Method:method,Direction:"in"})
 		if err != nil && err.Error() != "EOF"{
 			log.Printf("API: %s, error: %s, param: %s",api,err,pp)
 			return
