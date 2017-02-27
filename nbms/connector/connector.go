@@ -80,7 +80,7 @@ type(
 		Version int `xorm:"notnull version"`
 	}
 )
-const (
+const (  // iota is reset to 0
 	AMQP = "AMQP"
 	GET = "GET"
 	POST = "POST"
@@ -138,52 +138,6 @@ func (s *service)DeleteRecord(bean interface{})(int64, error){
 func (s *service)FindRecords(bean interface{}, cond ...interface{})(error){
 	return s.db.Find(bean, cond)
 }
-//func (s *service)BatchUpdate(query string, params [][]interface{}, action func()(error)) (error){
-//	// Start Transaction
-//	tx, err := s.db.Begin()
-//	if err!=nil{
-//		return errors.New("Transaction init Error: "+err.Error())
-//	}
-//	// added to database
-//	stmt, err := tx.Prepare(query)
-//	if err!=nil{
-//		return errors.New("Query preparation Error: "+err.Error())
-//	}
-//	defer stmt.Close()
-//	for _,stms := range params{
-//		_, err := stmt.Exec(stms...)
-//		if err!=nil{
-//			tx.Rollback()
-//			return errors.New("Sql execution Error: "+err.Error())
-//		}
-//	}
-//	err = action()
-//	if err!=nil{
-//		tx.Rollback()
-//		return errors.New("Action execution Error: "+err.Error())
-//	}
-//	tx.Commit()
-//	return nil
-//}
-//func (s *service)SqlUpdate(query string, params[]interface{}) (error){
-//	_, err := s.db.Exec("select user,password,host from mysql.user",params...)
-//	if err!=nil{
-//		return errors.New("Sql execution Error: "+err.Error())
-//	}
-//	return nil
-//}
-//func (s *service)SqSelect(query string, params[]interface{}, cols []*interface{}) (error){
-//	rows, err := s.db.Query("select user,password,host from mysql.user",params...)
-//	if err!=nil{
-//		return errors.New("Sql execution Error: "+err.Error())
-//	}
-//	defer rows.Close()
-//	err = rows.Scan(cols...)
-//	if err!=nil{
-//		return errors.New("Result extract Error: "+err.Error())
-//	}
-//	return nil
-//}
 func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]byte)) (error){
 	// create a mq agent if not exist
 	if s.config.Amqp.Port == 0 || s.config.Amqp.Address == "" {
@@ -244,10 +198,12 @@ func (s *service)StartServer(remoteShutdown bool)error{
 			WriteTimeout: 10 * time.Second,
 			MaxHeaderBytes: 1 << 20,
 		}
+		ch := make(chan int)
 		if remoteShutdown{
 			http.HandleFunc("/shutdown",func(resp http.ResponseWriter, req *http.Request){
 				resp.Write([]byte("{\"result\":\"success\",\"code\":200}"))
 				svr.Shutdown(nil)
+				ch <- 1
 			})
 		}
 		//err := http.ListenAndServe(":80", nil)
@@ -255,9 +211,23 @@ func (s *service)StartServer(remoteShutdown bool)error{
 		if err!=nil{return err}
 		s.started = true
 		log.Println("Listen to http(80)")
+		select {
+		case <-ch:
+			log.Println("Shuting down server ... ...")
+		}
 	}
 	return nil
 }
-func (s *service)SendRequest(service string, api string, param string, method uint32)(error){
-	return nil
+func (s *service)SendRequest(method string, service string, api string, param string)(error){
+	switch method{
+	case AMQP:{
+		// amqp
+		return s.messenger.SendTo(service,api,param)
+	}
+	case GET,POST,PUT:{
+		// TODO http request
+
+	}
+	}
+	return errors.New("未知的请求方式")
 }
