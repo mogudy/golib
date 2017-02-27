@@ -125,10 +125,10 @@ func (s *service)DeRegister(){
 	if s.agent !=nil{ s.agent.DeRegister() }
 }
 func (s *service)CreateDataTable(bean ...interface{})(error){
-	return s.db.Sync2(bean)
+	return s.db.Sync2(bean...)
 }
 func (s *service)InsertRecord(bean ...interface{})(int64, error){
-	return s.db.Insert(bean)
+	return s.db.Insert(bean...)
 }
 func (s *service)UpdateRecord(bean interface{}, conditions ...interface{})(int64, error){
 	return s.db.Update(bean,conditions)
