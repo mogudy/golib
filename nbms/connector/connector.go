@@ -27,7 +27,7 @@ type(
 		RegisterMessageHandler(topic string, callback func([]byte)([]byte))(error)
 		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte))
 		StartServer(remoteShutdown bool)error
-		SendRequest(service string, api string, param string, method uint32)(error)
+		SendRequest(method string, service string, api string, param string)(error)
 	}
 	service struct {
 		agent     servant.ConsulAgent
