@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"log"
 	"net/http"
 	"github.com/koding/multiconfig"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"github.com/go-xorm/xorm"
 	"github.com/go-xorm/core"
 	"strconv"
+	"github.com/leoxk/log"
 )
 
 type(
@@ -68,13 +68,16 @@ type(
 		Interval string
 		Timeout string
 	}
-
+	NbLogger struct {
+		Destination string
+	}
 	RequestHistory struct {
 		Id int64 `xorm:"pk autoincr"`
 		Ip string `xorm:"notnull default('')"`
 		Service string `xorm:"notnull"`
 		Api string `xorm:"notnull"`
 		Param string `xorm:"notnull varchar(1024) default('')"`
+		Result string `xorm:"notnull varchar(1024) default('')"`
 		Method string `xorm:"notnull"`
 		Direction string `xorm:"notnull"`
 		RequestTime time.Time `xorm:"notnull created"`
@@ -165,12 +168,8 @@ func (s *service)RegisterMessageHandler(topic string, callback func([]byte)([]by
 		s.config.Service.Name,topic,
 		func(param []byte)([]byte){
 			s.db.Insert(RequestHistory{Service:s.config.Service.Name,Api:topic,Param:string(param),Method:"amqp",Direction:"in"})
-			res,err = callback(param)
-			if err!=nil{
-				return err
-			}else{
-				return res
-			}
+			res,_ := callback(param)
+			return res
 	})
 	if err==nil{s.msgp = s.msgp+1}
 	return err
@@ -232,7 +231,9 @@ func (s *service)SendRequest(method string, service string, api string, param st
 	switch method{
 	case AMQP:{
 		// amqp
-		return s.messenger.SendTo(service,api,param)
+		//return s.messenger.SendTo(service,api,param)
+		log.Printf("Send request via AMQP to %s@%s: %s \n",api,service,param)
+		return nil
 	}
 	case GET,POST,PUT:{
 		// TODO http request

@@ -1,43 +1,43 @@
 package main
 
 import (
-	"log"
+	"github.com/leoxk/log"
 	"github.com/mogudy/golib/nbms/connector"
 	"github.com/bububa/cron"
 	"time"
 	"encoding/json"
 	"github.com/mogudy/golib/nbms/alarm"
 	"errors"
+	"gopkg.in/validator.v2"
 )
 
 func exitOnError(err error, msg string){
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err.Error())
+		log.Fatal("%s: %s", msg, err.Error())
 	}
 }
 
 var ca connector.ConsulService
 var cr *cron.Cron
-var taskTbl GenericTask
 var tmm alarm.Timer
 
 type (
 	GenericTask struct{
 		Id         int64 `xorm:"pk autoincr" json:",omitempty"`
-		StartedAt  int64 `xorm:"notnull"`
+		StartedAt  int64 `xorm:"notnull" validate:"nonzero"`
 		Schedule   string `xorm:"notnull" json:",omitempty"`
-		Repetition int32 `xorm:"notnull default(0)"`
+		Repetition int32 `xorm:"notnull default(0)" validate:"nonzero"`
 		Count      int32 `xorm:"notnull default(0)" json:",omitempty"`
-		Service    string `xorm:"notnull"`
-		Api        string `xorm:"notnull"`
+		Service    string `xorm:"notnull" validate:"nonzero"`
+		Api        string `xorm:"notnull" validate:"nonzero"`
 		Param      string `xorm:"notnull varchar(1024) default('')" json:",omitempty"`
-		Method     string `xorm:"notnull"`
-		Summary    string `xorm:"notnull"`
+		Method     string `xorm:"notnull" validate:"nonzero"`
+		Summary    string `xorm:"notnull" validate:"nonzero"`
 		CreatedAt  time.Time `xorm:"notnull created" json:",omitempty"`
 		HandledAt  time.Time `xorm:"notnull updated" json:",omitempty"`
 		HandledBy  string `xorm:"notnull" json:",omitempty"`
 		Version    int32 `xorm:"notnull version" json:",omitempty"`
-		Uuid       string `xorm:"notnull unique"`
+		Uuid       string `xorm:"notnull unique" validate:"nonzero"`
 		DeletedAt time.Time `xorm:"deleted" json:",omitempty"`
 	}
 	StandardResponse struct {
@@ -47,8 +47,7 @@ type (
 	}
 )
 
-// TODO 新增定时任务（任务循环时间（cron格式），循环次数，服务名，api，参数，说明）
-// addCron(cron Start, times int, serviceName String, url String, param String, comment String)
+// 新增任务 addCron(StartedAt, Schedule, Repetition, Service, Api, param, Method, Summary, Uuid)
 func addPost(param []byte)([]byte,error){
 	task,err := parseTask(param)
 	if err!=nil {
@@ -65,8 +64,8 @@ func addPost(param []byte)([]byte,error){
 	res,_ := json.Marshal(StandardResponse{200,"Success","Cron task added"})
 	return res,nil
 }
-// TODO 列出定时任务调度器中的所有任务
-func listGet([]byte)([]byte,error){
+// 列出定时任务调度器中的所有任务
+func listGet(param []byte)([]byte,error){
 	everyone := make([]GenericTask, 0)
 	err := ca.FindRecords(&everyone)
 	if err!=nil {
@@ -80,7 +79,7 @@ func listGet([]byte)([]byte,error){
 	}
 	return res,nil
 }
-// TODO 获得定时任务调度器中的某任务详情（{uuid}）
+// 获得定时任务调度器中的某任务详情（addCron(StartedAt, Schedule, Repetition, Service, Api, param, Method, Summary, Uuid)）
 func jobGet(param []byte)([]byte,error){
 	task,err := parseTask(param)
 	if err!=nil {
@@ -156,17 +155,21 @@ func addCron(t *GenericTask)error{
 				ca.UpdateRecord(t,GenericTask{Id:t.Id})
 			}
 		}else{
-			log.Println(t.Uuid + " deleted.")
+			log.Info("Task(uuid): %s has been deleted. \n",t.Uuid)
 			cr.DeleteJob(t.Uuid)
+			ca.DeleteRecord(t)
 		}
 	})
 	return nil
 }
 func parseTask(param []byte) (*GenericTask,error){
 	task := new(GenericTask)
-	err := json.Unmarshal(param, task)
-	if err!=nil{
+
+	if err := json.Unmarshal(param, task);err!=nil{
 		return nil, err
+	}
+	if err := validator.Validate(task); err != nil {
+		return nil,err
 	}
 	return task, nil
 }
@@ -189,8 +192,9 @@ func main(){
 	// TODO load unhandled task from DB
 
 
-	err = ca.RegisterMessageHandler("topic-test",func(msg []byte)([]byte,error){
-		log.Println("received message")
+	err = ca.RegisterMessageHandler(ca.Config().Amqp.Name,func(msg []byte)([]byte,error){
+		log.Info("received message: %s",string(msg))
+		// TODO deal with amqp listening
 		return []byte(""),nil
 	})
 	exitOnError(err,"消息队列注册失败")
