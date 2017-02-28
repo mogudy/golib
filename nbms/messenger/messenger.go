@@ -3,7 +3,6 @@ package messenger
 import (
 	"github.com/streadway/amqp"
 	"fmt"
-	"log"
 )
 
 type(
@@ -25,7 +24,6 @@ func CreateMessenger(username string,password string,server string,port uint32)(
 	// establish connection
 	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",username,password,server,port))
 	if err != nil { return nil, err}
-	log.Println("AMQP Connection established.")
 	return &agent{conn:conn,queues:[]amqp.Queue{}},nil
 }
 
@@ -59,7 +57,6 @@ func (a *agent)ListenWithFunc(consumerName string,exch string, topic string, cal
 		nil,     // arguments
 	)
 	if err != nil { return err}
-	log.Println("Entering consuming queue.")
 
 	err = a.rcvChan.QueueBind(
 		topic, // queue name
@@ -107,7 +104,6 @@ func (a *agent)ListenWithFunc(consumerName string,exch string, topic string, cal
 			d.Ack(false)
 		}
 	}()
-	log.Printf("Listen to AMQP Topic (%s) ... ... \n",topic)
 	a.queues = append(a.queues, q)
 	return nil
 }
