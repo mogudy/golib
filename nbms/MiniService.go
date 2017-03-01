@@ -10,12 +10,21 @@ import (
 	"github.com/mogudy/golib/nbms/logwriter"
 	"errors"
 	"gopkg.in/validator.v2"
+	"github.com/go-xorm/builder"
+	consulapi "github.com/hashicorp/consul/api"
 )
 
 func exitOnError(err error, msg string){
 	if err != nil {
 		log.Fatalf("%s: %s", msg, err.Error())
 	}
+}
+func buildResp(code int, msg string, result interface{})([]byte,error){
+	stat,_ := json.Marshal(StandardResponse{code,msg,result})
+	if code == 200{
+		return stat,nil
+	}
+	return stat,errors.New(string(code))
 }
 
 var ca connector.ConsulService
@@ -55,78 +64,67 @@ func addPost(param []byte)([]byte,error){
 	taskVal.SetTag("addtask")
 	task := new(GenericTask)
 	if err := json.Unmarshal(param, task);err!=nil{
-		stat,_ := json.Marshal(StandardResponse{400,"Param invalid error",err.Error()})
-		return stat,errors.New("400")
+		return buildResp(400,"Param invalid: ",err)
 	}
 	if err := taskVal.Validate(task); err != nil {
-		stat,_ := json.Marshal(StandardResponse{400,"Param invalid error",err.Error()})
-		return stat,errors.New("400")
+		return buildResp(400,"Param invalid: ",err)
 	}
 
 	task.HandledBy = ca.Config().Application["id"]
 	if _,err := ca.InsertRecord(task);err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db insertion error",err.Error()})
-		return stat,errors.New("500")
+		return buildResp(500,"Db query i error: ",err)
 	}
 	addTask(task)
-	res,_ := json.Marshal(StandardResponse{200,"Success","Cron task added"})
-	return res,nil
+	return buildResp(200,"Success: ","Cron task added")
 }
 // 列出定时任务调度器中的所有任务
 func listGet([]byte)([]byte,error){
 	everyone := make([]GenericTask, 0)
-	err := ca.FindRecords(&everyone)
+	err := ca.FindRecords(&everyone,nil,nil)
 	if err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db query error",err.Error()})
-		return stat,errors.New("500")
+		return buildResp(500,"Db query s error: ",err)
 	}
 	res,err := json.Marshal(everyone)
 	if err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db result parsing error",err.Error()})
-		return stat,errors.New("500")
+		return buildResp(500,"Db result parsing error: ",err)
 	}
 	return res,nil
 }
 // 获得定时任务调度器中的某任务详情（Uuid）
 func jobGet(param []byte)([]byte,error){
-	//task,err := parseTask(param)
 	task := new(GenericTask)
 	if err := json.Unmarshal(param, task);err!=nil{
-		stat,_ := json.Marshal(StandardResponse{400,"Param invalid error",err.Error()})
-		return stat,errors.New("400")
+		return buildResp(400,"Param invalid: ",err)
 	}
-
 	record,err := ca.GetFirstRecord(task)
 	if err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db query error",err.Error()})
-		return stat,errors.New("500")
+		return buildResp(500,"Db query s error: ",err)
 	}
-	res,err := json.Marshal(record)
-	if err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db result parsing error",err.Error()})
-		return stat,errors.New("500")
+	if record{
+		return buildResp(200,"Success",task)
+	}else{
+		return buildResp(204,"No Content","")
 	}
-	return res,nil
 }
 // 删除调度器中的任务（任务uuid）
 func delPost(param []byte)([]byte,error){
 	taskVal.SetTag("deltask")
 	task := new(GenericTask)
 	if err := json.Unmarshal(param, task);err!=nil{
-		stat,_ := json.Marshal(StandardResponse{400,"Param invalid error",err.Error()})
-		return stat,errors.New("400")
+		return buildResp(400,"Param invalid: ",err)
 	}
 	if err := taskVal.Validate(task); err != nil {
-		stat,_ := json.Marshal(StandardResponse{400,"Param invalid error",err.Error()})
-		return stat,errors.New("400")
+		return buildResp(400,"Param invalid: ",err)
 	}
 
-	if _,err := ca.DeleteRecord(task);err!=nil {
-		stat,_ := json.Marshal(StandardResponse{500,"Db record delete error",err.Error()})
-		return stat,errors.New("500")
+	return delJob(task)
+}
+func delJob(t *GenericTask)([]byte,error){
+	cr.DeleteJob(t.Uuid)
+	if _,err := ca.DeleteRecord(t);err!=nil {
+		return buildResp(500,"Db query d error: ",err)
 	}
-	res,_ := json.Marshal(StandardResponse{200,"Success","Cron task added"})
-	return res,nil
+	return buildResp(200,"Success: ","Cron task deleted.")
 }
 
 func addTask(t *GenericTask){
@@ -136,26 +134,24 @@ func addTask(t *GenericTask){
 
 	if t.Schedule == ""{
 		// Single Run
-		if execTime.After(nowTime.Add(2*time.Second)){
-			// Deferred
+		if execTime.After(nowTime.Add(5*time.Second)){
+			// Deferred to run if task was scheduled 5 secs later
 			tmm.RunFuncAt(execTime, func(){
-					// Deferred Single run
-					ca.SendRequest(t.Method, t.Service, t.Api, t.Param)
+				runTask(t)
 			}, t.Summary)
 		}else{
-			// Immediate
-			ca.SendRequest(t.Method, t.Service, t.Api, t.Param)
+			// Immediate run if task was scheduled to run in 5 secs
+			runTask(t)
 		}
 	}else{
-		// Cron
-		if execTime.After(nowTime.Add(2*time.Minute)){
-			// Deferred
-			tmm.RunFuncAt(execTime.Add(1*time.Minute), func(){
-				// Deferred Addto cron
+		// Cron task
+		if execTime.After(nowTime.Add(5*time.Second)){
+			// Deferred to run if task was scheduled 5 secs later
+			tmm.RunFuncAt(execTime.Add(5*time.Second), func(){
 				addCron(t)
 			}, t.Summary)
 		}else{
-			// Immediate
+			// Immediate run if task was scheduled to run in 5 secs
 			addCron(t)
 		}
 	}
@@ -164,25 +160,43 @@ func addCron(t *GenericTask)error{
 	cr.AddFunc(t.Uuid,t.Schedule, func(){
 		if t.Repetition > 0 && t.Repetition > t.Count || t.Repetition<=0{
 			// repetation limits
-			if ca.SendRequest(t.Method,t.Service,t.Api,t.Param)==nil{
-				t.Count = t.Count+1
-				ca.UpdateRecord(t,GenericTask{Id:t.Id})
-			}
+			runTask(t)
 		}else{
-			cr.DeleteJob(t.Uuid)
-			ca.DeleteRecord(t)
-			log.Printf("Task(uuid): %s has been deleted. \n",t.Uuid)
+			_,err := delJob(t)
+			if err!=nil{log.Printf("Task(uuid): %s deletion failed. \n",t.Uuid)}else{log.Printf("Task(uuid): %s has been deleted. \n",t.Uuid)}
 		}
 	})
 	return nil
 }
-func parseTask(param []byte) (*GenericTask,error){
-	task := new(GenericTask)
-	err := json.Unmarshal(param, task)
-	if err!=nil{
-		return nil, err
+func runTask(t *GenericTask)error{
+	err:=ca.SendRequest(t.Method,t.Service,t.Api,t.Param)
+	if err==nil{
+		t.Count = t.Count+1
+		ca.UpdateRecord(t,GenericTask{Id:t.Id})
 	}
-	return task, nil
+	return err
+}
+
+func loadTask(handler map[string]*consulapi.AgentService)error{
+	// extract service handler names
+	keys := make([]string, 0, len(handler))
+	for _,v:=range handler{
+		keys = append(keys,v.Service)
+	}
+
+	// load task that does not belong to existing handler
+	tasks := make([]GenericTask,0)
+	if err := ca.FindRecords(&tasks,builder.NotIn("handled_by",keys));err!=nil{
+		return err
+	}
+	for _,v:=range tasks{
+		// Added task
+		v.HandledBy = ca.Config().Application["ID"]
+		ca.UpdateRecord(v,GenericTask{Id:v.Id})
+		addTask(&v)
+		log.Printf("Task(uuid:%s) has been loaded to queue from db.",v.Uuid)
+	}
+	return nil
 }
 
 func main(){
@@ -202,16 +216,13 @@ func main(){
 	})
 
 	ca,err = connector.CreateService("config.toml")
-	exitOnError(err, "服务创建失败")
+	exitOnError(err, "consul服务创建失败")
 	defer ca.DeRegister()
-	log.Println("服务加载成功")
+	log.Println("consul服务加载成功")
 
 	err = ca.CreateDataTable(new(GenericTask))
 	exitOnError(err, "数据库创建失败")
 	log.Println("数据库加载成功")
-
-	// TODO load unhandled task from DB
-	log.Println("历史任务加载成功")
 
 	err = ca.RegisterMessageHandler("add",func(msg []byte)([]byte,error){
 		log.Printf("received message: %s \n",string(msg))
@@ -219,6 +230,12 @@ func main(){
 	})
 	exitOnError(err,"消息队列注册失败")
 	log.Printf("消息监听器注册成功：%s \n", ca.Config().Amqp.Name)
+
+	// load unhandled task from DB
+	svcs,err := ca.Services()
+	loadTask(svcs)
+	log.Println("历史任务加载成功")
+
 	ca.RegisterHttpHandler("/add", connector.POST, addPost)
 	log.Printf("http接口注册成功：%s \n", "/add")
 	ca.RegisterHttpHandler("/del", connector.POST, delPost)
