@@ -14,17 +14,23 @@ import (
 	"strconv"
 	"log"
 	"github.com/mogudy/golib/nbms/logwriter"
+	"github.com/gorilla/schema"
+	"encoding/json"
+	"bytes"
+	"io/ioutil"
+	consul "github.com/hashicorp/consul/api"
 )
 
 type(
 	ConsulService interface {
 		Config()*NbConfig
+		Services()(map[string]*consul.AgentService,error)
 		DeRegister()
 		CreateDataTable(bean ...interface{})error
 		InsertRecord(bean ...interface{})(int64, error)
 		UpdateRecord(bean interface{}, conditions ...interface{})(int64, error)
 		DeleteRecord(bean interface{})(int64, error)
-		FindRecords(bean interface{}, conditions ...interface{})(error)
+		FindRecords(bean interface{}, query interface{}, args ...interface{})(error)
 		GetFirstRecord(bean interface{})(bool, error)
 		RegisterMessageHandler(api string, callback func([]byte)([]byte,error))(error)
 		RegisterHttpHandler(api string, method string, callback func([]byte)([]byte,error))
@@ -38,6 +44,8 @@ type(
 		started   bool
 		db        *xorm.Engine
 		msgp uint32
+		client *http.Client
+		svcId string
 	}
 )
 
@@ -95,6 +103,7 @@ const (  // iota is reset to 0
 	OPTION = "OPTION"
 )
 var logger *log.Logger
+var decoder = schema.NewDecoder()
 
 func CreateService(filepath string) (ConsulService, error){
 	// create access log
@@ -133,16 +142,25 @@ func CreateService(filepath string) (ConsulService, error){
 	// Register Service & Health check
 	agent, err := servant.NewConsulClient(fmt.Sprintf("%s:%d",config.Service.Server,config.Service.Port))
 	if err != nil{ engine.Close();return nil, err }
-	err = agent.Register(fmt.Sprintf("%s-%s",config.Service.Name,time.Now().Format("2006010215")), config.Service.Tags, 80)
+	svcId,err := agent.Register(config.Service.Name, config.Service.Tags, 80)
 	if err != nil{ agent.DeRegister();engine.Close();return nil, err }
 	log.Println("Consul agent registered")
 
-	return &service{agent: agent,config: config,started: false,db:engine,msgp:0},nil
+	return &service{agent: agent,config: config,started: false,db:engine,msgp:0,client:&http.Client{},svcId:svcId},nil
 }
 func (s *service)Config()*NbConfig{
 	tmp := new(NbConfig)
 	*tmp = * s.config
 	return tmp
+}
+func (s *service)GetServiceUrl(service string, api string, query interface{})string{
+	//service = s.agent.Service(service,nil)
+	// TODO get service url
+	return ""
+}
+func (s *service)Services()(map[string]*consul.AgentService,error){
+	// TODO get alive service list from consul
+	return s.agent.Services("")
 }
 func (s *service)DeRegister(){
 	if s.db !=nil{ s.db.Close() }
@@ -164,8 +182,8 @@ func (s *service)DeleteRecord(bean interface{})(int64, error){
 func (s *service)GetFirstRecord(bean interface{})(bool,error){
 	return s.db.Get(bean)
 }
-func (s *service)FindRecords(bean interface{}, cond ...interface{})(error){
-	return s.db.Find(bean, cond...)
+func (s *service)FindRecords(bean interface{}, query interface{}, args ...interface{})(error){
+	return s.db.Where(query,args).Find(bean)
 }
 func (s *service)RegisterMessageHandler(api string, callback func([]byte)([]byte,error)) (error){
 	// create a mq agent if not exist
@@ -202,14 +220,22 @@ func (s *service)RegisterHttpHandler(api string, method string, callback func([]
 	// register the api in http interface
 	http.HandleFunc(api, func(resp http.ResponseWriter, req *http.Request){
 		if req.Method==method{
+			var pp []byte
+			var err error
 			if req.Method == GET{
-				// TODO get query parameter
+				// get query parameter
+				qry := make(map[string]string)
+				for k,v := range req.URL.Query(){
+					if len(v) > 0{}
+					qry[k] = v[0]
+				}
+				pp,err = json.Marshal(qry)
 			}else{
-				// TODO get post body
+				// get post body
+				pp = make([]byte, req.ContentLength)
+				_,err = req.Body.Read(pp)
+				defer req.Body.Close()
 			}
-			pp := make([]byte, req.ContentLength)
-			_,err := req.Body.Read(pp)
-			defer req.Body.Close()
 			logger.Printf("RECV-REQ, %s, %s, %s, %s",req.RemoteAddr,req.Method,api,string(pp))
 			if err != nil && err.Error() != "EOF"{
 				logger.Printf("RECV-RES, %s, %s, %s, %s",req.RemoteAddr,req.Method,api,err.Error())
@@ -273,8 +299,21 @@ func (s *service)SendRequest(method string, service string, api string, param st
 	}
 	case GET,POST,PUT:{
 		logger.Printf("SEND-REQ, %s, %s, %s, %s",service,method,api,param)
-		// TODO http request
-		logger.Printf("RECV-RES, %s, %s, %s, SUCCESS",service,method,api)
+		var url string
+		if method==GET{
+			url = s.GetServiceUrl(service,api,param)
+		}else{
+			url = s.GetServiceUrl(service,api,nil)
+		}
+		req, _ := http.NewRequest(method, url, bytes.NewBuffer([]byte(param)))
+		resp, err := s.client.Do(req)
+		if err != nil {
+			logger.Printf("RECV-RES, %s, %s, %s, %s",service,method,api,err.Error())
+			return err
+		}
+		defer resp.Body.Close()
+		body, _ := ioutil.ReadAll(resp.Body)
+		logger.Printf("RECV-RES, %s, %s, %s, %s:%s",service,method,api,resp.Status,body)
 	}
 	}
 	return errors.New("未知的请求方式")

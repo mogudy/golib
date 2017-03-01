@@ -3,14 +3,14 @@ package servant
 import (
 	"fmt"
 	consul "github.com/hashicorp/consul/api"
-	"strings"
 	"time"
 )
 
 type ConsulAgent interface {
-	Service(string, string) ([]*consul.ServiceEntry, *consul.QueryMeta, error)
-	Register(string, []string, int) (error)
+	Service(service string, tag string) ([]*consul.ServiceEntry, *consul.QueryMeta, error)
+	Register(service string, tags []string, port int) (string,error)
 	DeRegister() error
+	Services(query string)(map[string]*consul.AgentService,error)
 }
 
 type agent struct {
@@ -31,8 +31,9 @@ func NewConsulClient(addr string) (ConsulAgent, error) {
 }
 
 // Register a service with consul local agent
-func (c *agent) Register(name string, tags []string, port int) error {
-	svcid := fmt.Sprintf("%s-%s", name, strings.Join(tags,"."))
+func (c *agent) Register(name string, tags []string, port int) (string,error) {
+	//svcid := fmt.Sprintf("%s-%s", name, strings.Join(tags,"."))
+	svcid := fmt.Sprintf("%s-%s", name, time.Now().Format("2006010215"))
 	reg := &consul.AgentServiceRegistration{
 		ID:   svcid,
 		Name: name,
@@ -41,9 +42,9 @@ func (c *agent) Register(name string, tags []string, port int) error {
 	}
 	err := c.consul.Agent().ServiceRegister(reg)
 	if err != nil {
-		return err
+		return "",err
 	}
-	chkid := fmt.Sprintf("%s-%s-ttl", name, strings.Join(tags,"."))
+	chkid := fmt.Sprintf("%s-ttl", svcid)
 	chkr := &consul.AgentCheckRegistration{
 		ID: chkid,
 		Name: name+"-ttl",
@@ -52,10 +53,10 @@ func (c *agent) Register(name string, tags []string, port int) error {
 	}
 	err = c.consul.Agent().CheckRegister(chkr)
 	if err != nil {
-		return err
+		return svcid,err
 	}
 	go ttl(c.consul.Agent(), chkid)
-	return nil
+	return svcid,nil
 }
 
 func ttl(agent *consul.Agent, id string){
@@ -67,15 +68,8 @@ func ttl(agent *consul.Agent, id string){
 
 // DeRegister a service with consul local agent
 func (c *agent) DeRegister() error {
-	err := c.consul.Agent().CheckDeregister(c.check)
-	if err != nil {
-		return err
-	}
-	err = c.consul.Agent().ServiceDeregister(c.service)
-	if err != nil {
-		return err
-	}
-	return nil
+	c.consul.Agent().CheckDeregister(c.check)
+	return c.consul.Agent().ServiceDeregister(c.service)
 }
 
 // Service return a service
@@ -89,4 +83,7 @@ func (c *agent) Service(service, tag string) ([]*consul.ServiceEntry, *consul.Qu
 		return nil, nil, err
 	}
 	return addrs, meta, nil
+}
+func (c *agent) Services(query string)(map[string]*consul.AgentService,error){
+	return c.consul.Agent().Services()
 }
