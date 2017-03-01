@@ -37,7 +37,7 @@ type(
 		messenger messenger.Connector
 		started   bool
 		db        *xorm.Engine
-		msgp uint32
+		topicno   uint32
 	}
 )
 
@@ -53,6 +53,7 @@ type(
 		Server string  `required:"true"`
 		Port uint32 `required:"true"`
 		Name string `required:"true"`
+		Id string `required:"true"`
 		Username string
 		Password string
 		Tags []string
@@ -137,7 +138,7 @@ func CreateService(filepath string) (ConsulService, error){
 	if err != nil{ agent.DeRegister();engine.Close();return nil, err }
 	log.Println("Consul agent registered")
 
-	return &service{agent: agent,config: config,started: false,db:engine,msgp:0},nil
+	return &service{agent: agent,config: config,started: false,db: engine, topicno: 0},nil
 }
 func (s *service)Config()*NbConfig{
 	tmp := new(NbConfig)
@@ -182,7 +183,7 @@ func (s *service)RegisterMessageHandler(api string, callback func([]byte)([]byte
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),
+	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.topicno),
 		s.config.Amqp.Name,api,
 		func(param []byte)([]byte){
 			logger.Printf("RECV->AMQP: %s @ %s",api,string(param))
@@ -191,7 +192,7 @@ func (s *service)RegisterMessageHandler(api string, callback func([]byte)([]byte
 			return res
 	})
 	if err==nil{
-		s.msgp = s.msgp+1
+		s.topicno = s.topicno +1
 		log.Printf("AMQP listen to topic: %s \n",api)
 	}
 
