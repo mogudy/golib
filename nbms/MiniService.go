@@ -70,7 +70,7 @@ func addPost(param []byte)([]byte,error){
 		return buildResp(400,"Param invalid: ",err)
 	}
 
-	task.HandledBy = ca.Config().Application["id"]
+	task.HandledBy = ca.Config().Service.Id
 	if _,err := ca.InsertRecord(task);err!=nil {
 		return buildResp(500,"Db query i error: ",err)
 	}
@@ -116,7 +116,6 @@ func delPost(param []byte)([]byte,error){
 	if err := taskVal.Validate(task); err != nil {
 		return buildResp(400,"Param invalid: ",err)
 	}
-
 	return delJob(task)
 }
 func delJob(t *GenericTask)([]byte,error){
@@ -131,14 +130,11 @@ func addTask(t *GenericTask){
 	// Immediate, Deferred or AMQP
 	execTime := time.Unix(t.StartedAt,0)
 	nowTime := time.Now()
-
 	if t.Schedule == ""{
 		// Single Run
 		if execTime.After(nowTime.Add(5*time.Second)){
 			// Deferred to run if task was scheduled 5 secs later
-			tmm.RunFuncAt(execTime, func(){
-				runTask(t)
-			}, t.Summary)
+			tmm.RunFuncAt(execTime, func(){runTask(t)}, t.Summary)
 		}else{
 			// Immediate run if task was scheduled to run in 5 secs
 			runTask(t)
@@ -147,9 +143,7 @@ func addTask(t *GenericTask){
 		// Cron task
 		if execTime.After(nowTime.Add(5*time.Second)){
 			// Deferred to run if task was scheduled 5 secs later
-			tmm.RunFuncAt(execTime.Add(5*time.Second), func(){
-				addCron(t)
-			}, t.Summary)
+			tmm.RunFuncAt(execTime.Add(5*time.Second), func(){addCron(t)}, t.Summary)
 		}else{
 			// Immediate run if task was scheduled to run in 5 secs
 			addCron(t)
@@ -191,24 +185,25 @@ func loadTask(handler map[string]*consulapi.AgentService)error{
 	}
 	for _,v:=range tasks{
 		// Added task
-		v.HandledBy = ca.Config().Application["ID"]
+		v.HandledBy = ca.Config().Service.Id
 		ca.UpdateRecord(v,GenericTask{Id:v.Id})
 		addTask(&v)
-		log.Printf("Task(uuid:%s) has been loaded to queue from db.",v.Uuid)
+		log.Printf("Loaded unhandled task(uuid:%s) from db.",v.Uuid)
 	}
 	return nil
 }
 
 func main(){
 	s,err := logwriter.New("app.log")
-	exitOnError(err, "日志创建失败")
+	exitOnError(err, "Log file creation failed!")
 	//log.SetOutput(s)
+	log.Println("Application log file rotated")
 
 	cr = cron.New()
 	cr.Start()
 	defer cr.Stop()
 	tmm = alarm.CreateAlarm()
-	log.Println("定时器加载成功")
+	log.Println("Alarm & Cron core module loaded.")
 	cr.AddFunc("app_rotate_log","0 0 0 * * *",func(){
 		if err=s.Rotate();err!=nil{
 			log.Println(err.Error())
@@ -216,36 +211,33 @@ func main(){
 	})
 
 	ca,err = connector.CreateService("config.toml")
-	exitOnError(err, "consul服务创建失败")
+	exitOnError(err, "Consul service creation failed!")
 	defer ca.DeRegister()
-	log.Println("consul服务加载成功")
 
 	err = ca.CreateDataTable(new(GenericTask))
-	exitOnError(err, "数据库创建失败")
-	log.Println("数据库加载成功")
+	exitOnError(err, "Data table creation failed!")
+	log.Println("GenericTask data table synchronized")
 
 	err = ca.RegisterMessageHandler("add",func(msg []byte)([]byte,error){
 		log.Printf("received message: %s \n",string(msg))
 		return []byte(""),nil
 	})
-	exitOnError(err,"消息队列注册失败")
-	log.Printf("消息监听器注册成功：%s \n", ca.Config().Amqp.Name)
+	exitOnError(err,"Message Queue connection failed!")
 
 	// load unhandled task from DB
 	svcs,err := ca.Services()
 	loadTask(svcs)
-	log.Println("历史任务加载成功")
 
 	ca.RegisterHttpHandler("/add", connector.POST, addPost)
-	log.Printf("http接口注册成功：%s \n", "/add")
+	log.Printf("Http API registered：%s \n", "/add")
 	ca.RegisterHttpHandler("/del", connector.POST, delPost)
-	log.Printf("http接口注册成功：%s \n", "/del")
+	log.Printf("Http API registered：%s \n", "/del")
 	ca.RegisterHttpHandler("/list", connector.GET, listGet)
-	log.Printf("http接口注册成功：%s \n", "/list")
+	log.Printf("Http API registered：%s \n", "/list")
 	ca.RegisterHttpHandler("/job", connector.GET, jobGet)
-	log.Printf("http接口注册成功：%s \n", "/job")
+	log.Printf("Http API registered：%s \n", "/job")
 
 	if err = ca.StartServer(true);err!=nil{
-		exitOnError(err,"http接口注册失败")
+		exitOnError(err,"Http API registration failed!")
 	}
 }

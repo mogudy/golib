@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"log"
 	"github.com/mogudy/golib/nbms/logwriter"
-	"github.com/gorilla/schema"
 	"encoding/json"
 	"bytes"
 	"io/ioutil"
@@ -43,9 +42,8 @@ type(
 		messenger messenger.Connector
 		started   bool
 		db        *xorm.Engine
-		msgp uint32
-		client *http.Client
-		svcId string
+		topicno   uint32
+		client    *http.Client
 	}
 )
 
@@ -58,9 +56,11 @@ type(
 		Application map[string]string
 	}
 	NbAgentInfo struct {
+		Autoregister bool `default:"false"`
 		Server string  `required:"true"`
 		Port uint32 `required:"true"`
 		Name string `required:"true"`
+		Id string `required:"true"`
 		Username string
 		Password string
 		Tags []string
@@ -103,7 +103,6 @@ const (  // iota is reset to 0
 	OPTION = "OPTION"
 )
 var logger *log.Logger
-var decoder = schema.NewDecoder()
 
 func CreateService(filepath string) (ConsulService, error){
 	// create access log
@@ -117,6 +116,7 @@ func CreateService(filepath string) (ConsulService, error){
 			s.Rotate()
 		}
 	}()
+	log.Println("Access log file rotated")
 
 	// Loading config
 	config := new (NbConfig)
@@ -137,16 +137,23 @@ func CreateService(filepath string) (ConsulService, error){
 	// Init table: request_history
 	err = engine.Sync2(new (RequestHistory))
 	if err != nil {engine.Close();return nil, err}
-	log.Println("Query table synchronized")
+	log.Println("RequestHistory data table synchronized")
 
-	// Register Service & Health check
+	// Consul agent registration
 	agent, err := servant.NewConsulClient(fmt.Sprintf("%s:%d",config.Service.Server,config.Service.Port))
 	if err != nil{ engine.Close();return nil, err }
-	svcId,err := agent.Register(config.Service.Name, config.Service.Tags, 80)
-	if err != nil{ agent.DeRegister();engine.Close();return nil, err }
-	log.Println("Consul agent registered")
+	log.Println("Consul agent connected.")
 
-	return &service{agent: agent,config: config,started: false,db:engine,msgp:0,client:&http.Client{},svcId:svcId},nil
+	// Consul service registration
+	if config.Service.Autoregister {
+		svcId,err := agent.Register(config.Service.Name, config.Service.Tags, 80)
+		if err != nil{
+			log.Printf("Consul service registration failed: %s \n",err.Error())
+		}
+		config.Service.Id = svcId
+		log.Printf("Consul service registered, ServiceId = %s \n",svcId)
+	}
+	return &service{agent: agent,config: config,started: false,db: engine, topicno: 0,client: &http.Client{}},err
 }
 func (s *service)Config()*NbConfig{
 	tmp := new(NbConfig)
@@ -160,12 +167,15 @@ func (s *service)GetServiceUrl(service string, api string, query interface{})str
 }
 func (s *service)Services()(map[string]*consul.AgentService,error){
 	// TODO get alive service list from consul
-	return s.agent.Services("")
+	return s.agent.Services()
 }
 func (s *service)DeRegister(){
 	if s.db !=nil{ s.db.Close() }
+	log.Println("DB connection closed.")
 	if s.messenger !=nil{ s.messenger.Close() }
+	log.Println("AMQP listener closed.")
 	if s.agent !=nil{ s.agent.DeRegister() }
+	log.Println("Consul agent closed.")
 }
 func (s *service)CreateDataTable(bean ...interface{})(error){
 	return s.db.Sync2(bean...)
@@ -200,8 +210,8 @@ func (s *service)RegisterMessageHandler(api string, callback func([]byte)([]byte
 	}
 
 	// create & listen to queue/topic if not registered yet
-	err := s.messenger.ListenWithFunc(fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("06010215"),s.msgp),
-		s.config.Amqp.Name,api,
+	consId := fmt.Sprintf("%s_%s_%d",s.config.Amqp.Name,time.Now().Format("20060102.1504"),s.topicno)
+	err := s.messenger.ListenWithFunc(consId,s.config.Amqp.Name,api,
 		func(param []byte)([]byte){
 			logger.Printf("RECV->AMQP: %s @ %s",api,string(param))
 			s.db.Insert(RequestHistory{Service:s.config.Amqp.Name,Api:api,Param:string(param),Method:"amqp",Direction:"in"})
@@ -209,11 +219,9 @@ func (s *service)RegisterMessageHandler(api string, callback func([]byte)([]byte
 			return res
 	})
 	if err==nil{
-		s.msgp = s.msgp+1
-		log.Printf("AMQP listen to topic: %s \n",api)
+		s.topicno = s.topicno +1
+		log.Printf("AMQP listener registered, Exch = %s, Topic = %s, ConsumerId = %s \n",s.config.Amqp.Name,api,consId)
 	}
-
-
 	return err
 }
 func (s *service)RegisterHttpHandler(api string, method string, callback func([]byte)([]byte,error)){
