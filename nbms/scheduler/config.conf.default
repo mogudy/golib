@@ -1,0 +1,49 @@
+[service]
+# Let the service register itself with consul(do NOT use registrator or other 3rd party tools)
+autoregister = false
+# service name to be registered in consul
+name = "scheduler"
+# service ID in consul
+id = "scheduler_1"
+# consul server ip
+server = "127.0.0.1"
+# consul server port
+port = 8500
+# consul server username
+#username = ""
+# consul server password
+#password = ""
+
+[health]
+# heartbeat method
+method = "ttl"
+# heartbeat interval
+interval = "30s"
+# heartbeat expiry time
+timeout = "30s"
+
+[database]
+# db server
+address = "127.0.0.1"
+# db port
+port = 3306
+# db name
+name = "test"
+# db user
+username = "test"
+# db pass
+password = "test"
+
+[amqp]
+# rabbitmq server
+address = "127.0.0.1"
+# rabbitmq port
+port = 5672
+# rabbitmq exchange name
+name = "scheduler"
+# rabbitmq user
+username = "guest"
+# rabbitmq pass
+password = "guest"
+
+[Application]

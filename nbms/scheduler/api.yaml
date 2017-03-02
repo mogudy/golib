@@ -1,0 +1,233 @@
+swagger: '2.0'
+info:
+  title: 定时任务调度器
+  description: 可按照cron或者延迟执行两种方案进行任务的调度，可通过AMQP协议或者HTTP协议进行通信，推荐HTTP协议（目前只有HTTP协议可以获知任务是否成功加入调度队列）
+  version: "1.0.0"
+# the domain of the service
+host: scheduler.service.consul.io
+# array of all schemes that your API supports
+schemes:
+  - http
+  - https
+# will be prefixed to all paths
+# basePath: /v1
+consumes:
+  - application/json
+  - text/plain
+produces:
+  - application/json
+paths:
+  /add:
+    post:
+      summary: 将任务加入调度器
+      parameters:
+        - name: task
+          in: body
+          description: 任务对象.
+          required: true
+          schema:
+            properties:
+              StartedAt:
+                type: integer
+                description: 任务最早不得早于这个时间开始，10位unix timestamp
+              Schedule:
+                type: string
+                description: 任务cron语句，一次性任务这里可以为空
+              Repetition:
+                type: integer
+                description: 任务执行次数
+              Service:
+                type: string
+                description: 执行任务的服务名
+              Api:
+                type: string
+                description: 执行任务的服务api地址
+              Param:
+                type: string
+                description: 执行任务的服务api参数
+              Method:
+                type: integer
+                description: 执行任务的方式，1：amqp，2：http，默认取1
+              Summary:
+                type: string
+                description: 任务的简介，用于人工查阅时区分不同任务
+              Uuid:
+                type: string
+                description: 请求的唯一识别码，相同识别码的多次请求将被防重机制丢弃
+            required:
+              - StartedAt
+              - Repetition
+              - Service
+              - Api
+              - Param
+              - Summary
+              - Uuid
+      responses:
+        200:
+          description: 处理结果
+          schema:
+            $ref: '#/definitions/Response'
+        400:
+          description: 因客户端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+        500:
+          description: 因服务端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+  /del:
+    post:
+      summary: 删除指定任务
+      parameters:
+        - name: Uuid
+          in: body
+          description: 任务对象的UUID
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: 处理结果
+          schema:
+            $ref: '#/definitions/Response'
+        400:
+          description: 因客户端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+        500:
+          description: 因服务端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+  /job:
+    get:
+      summary: 获取指定任务的详情
+      parameters:
+        - name: Uuid
+          in: query
+          description: 任务的uuid.
+          required: true
+          type: string
+      responses:
+        200:
+          description: 任务详情
+          schema:
+            $ref: '#/definitions/Task'
+        400:
+          description: 因客户端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+        500:
+          description: 因服务端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+  /list:
+    get:
+      summary: 获取符合条件的任务列表
+      parameters:
+        - name: Uuid
+          in: query
+          description: 任务对象的uuid.
+          type: string
+        - name: Service
+          in: query
+          description: 任务的请求对象服务.
+          type: string
+        - name: Api
+          in: query
+          description: 任务的请求对象api.
+          type: string
+        - name: Method
+          in: query
+          description: 任务的请求方式.
+          type: string
+        - name: Summary
+          in: query
+          description: 任务对象的简介.
+          type: string
+        - name: HandledBy
+          in: query
+          description: 处理任务对象的服务id.
+          type: string
+      responses:
+        200:
+          description: 处理结果
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/Task'
+        400:
+          description: 因客户端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+        500:
+          description: 因服务端原因导致的错误
+          schema:
+            $ref: '#/definitions/Response'
+definitions:
+  Response:
+    type: object
+    properties:
+      code:
+        description: 错误码
+        type: integer
+      message:
+        description: 错误信息
+        type: string
+      result:
+        description: 附加说明
+        type: string
+  Task:
+    type: object
+    properties:
+      Id:
+        description: 任务id
+        type: integer
+      StartedAt:
+        description: 任务最早开始时间
+        type: string
+        format: date-time
+      Schedule:
+        description: 任务的cron信息
+        type: string
+      Repetition:
+        description: 任务重复次数
+        type: integer
+      Count:
+        description: 任务已执行次数
+        type: integer
+      Service:
+        description: 任务的请求服务名
+        type: string
+      Api:
+        description: 任务的请求api名
+        type: string
+      Param:
+        description: 任务的请求参数
+        type: string
+      Method:
+        description: 任务的请求方式
+        type: string
+      Summary:
+        description: 任务简介
+        type: string
+      CreatedAt:
+        description: 任务的创建时间
+        type: string
+        format: date-time
+      HandledAt:
+        description: 任务最近一次被加载的时间
+        type: string
+        format: date-time
+      HandledBy:
+        description: 任务最近一次被哪个服务加载
+        type: string
+      Version:
+        description: 任务的更新次数
+        type: string
+      Uuid:
+        description: 任务的uuid
+        type: string
+      DeletedAt:
+        description: 任务被删除的时间
+        type: string
+        format: date-time
